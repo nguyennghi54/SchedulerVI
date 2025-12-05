@@ -305,3 +305,38 @@ with tab_calendar:
     else:
         st.info("Chưa có dữ liệu lịch.")
 
+
+# ==========================================
+# 4. DEBUG DASHBOARD (Dán vào cuối file)
+# ==========================================
+with st.sidebar:
+    st.divider()
+    st.header("🛠 Công cụ Debug (Admin)")
+    
+    # 1. Kiểm tra file DB đang nằm ở đâu
+    import os
+    st.write(f"Đường dẫn DB: `{os.path.abspath('scheduler.db')}`")
+    
+    # 2. Nút tải file DB về máy (Để kiểm tra xem file có thực sự thay đổi không)
+    try:
+        with open("scheduler.db", "rb") as fp:
+            st.download_button(
+                label="📥 Tải file Database (.db)",
+                data=fp,
+                file_name="scheduler_debug.db",
+                mime="application/x-sqlite3"
+            )
+    except FileNotFoundError:
+        st.error("Không tìm thấy file scheduler.db!")
+
+    # 3. Chạy SQL trực tiếp để soi dữ liệu
+    st.write("### Soi dữ liệu thô:")
+    if st.button("Xem top 5 sự kiện trong DB"):
+        # Kết nối thủ công để chắc chắn không qua cache của class Database
+        try:
+            conn_debug = sqlite3.connect("scheduler.db")
+            df_debug = pd.read_sql_query("SELECT * FROM events ORDER BY id DESC LIMIT 5", conn_debug)
+            st.dataframe(df_debug)
+            conn_debug.close()
+        except Exception as e:
+            st.error(f"Lỗi đọc DB: {e}")
