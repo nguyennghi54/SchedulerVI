@@ -361,43 +361,69 @@ with tab_list:
     else:
         st.info("Danh sách trống. Hãy thêm sự kiện mới!")
 
-# --- TAB 2: CALENDAR VIEW (LỊCH TRỰC QUAN) ---
+# --- TAB 2: CALENDAR VIEW (ĐÃ SỬA LỖI) ---
 with tab_calendar:
     if not df.empty:
-        # Chuẩn bị dữ liệu cho thư viện Calendar
+        # 1. Debug: Kiểm tra xem có dữ liệu không
+        # st.write(f"Tổng số sự kiện trong DB: {len(df)}")
+
         calendar_events = []
+
         for _, row in df.iterrows():
-            # Calendar lib cần format ISO
+            # Kiểm tra dữ liệu rỗng trước khi convert
+            if not row['Bắt Đầu']: continue
+
             try:
-                s_iso = pd.to_datetime(row['Bắt Đầu']).isoformat()
-                e_iso = pd.to_datetime(row['Kết Thúc']).isoformat() if row['Kết Thúc'] else s_iso
+                # Convert Start Time
+                s_dt = pd.to_datetime(row['Bắt Đầu'])
+                if pd.isna(s_dt): continue  # Bỏ qua nếu NaT
+                s_iso = s_dt.isoformat()
+
+                # Convert End Time
+                e_iso = s_iso  # Mặc định End = Start
+                if row['Kết Thúc']:
+                    e_dt = pd.to_datetime(row['Kết Thúc'])
+                    if not pd.isna(e_dt):
+                        e_iso = e_dt.isoformat()
+
+                # Tô màu: Đỏ nếu có nhắc nhở, Xanh nếu không
+                color = "#FF6C6C" if row['Nhắc(p)'] > 0 else "#3788d8"
 
                 calendar_events.append({
-                    "title": f"{row['Sự Kiện']} ({row['Địa Điểm'] or ''})",
+                    "title": f"{row['Sự Kiện']}",
                     "start": s_iso,
                     "end": e_iso,
-                    "backgroundColor": "#FF6C6C" if row['Nhắc(p)'] > 0 else "#3788d8",
-                    "borderColor": "#FF6C6C" if row['Nhắc(p)'] > 0 else "#3788d8",
+                    "backgroundColor": color,
+                    "borderColor": color,
+                    # Thêm tooltip
+                    "extendedProps": {
+                        "location": row['Địa Điểm'] or "Không có địa điểm",
+                        "description": f"Nhắc trước: {row['Nhắc(p)']}p"
+                    }
                 })
-            except:
+            except Exception as e:
+                st.error(f"Lỗi dòng ID {row['ID']}: {e}") # Bật dòng này để debug nếu cần
                 continue
 
-        # Cấu hình Calendar
+        # 2. Cấu hình Calendar (Chỉnh lại view mặc định)
         calendar_options = {
-            "editable": "false",  # Không cho kéo thả trực tiếp để tránh lỗi logic phức tạp
+            "editable": True,  # Cho phép kéo thả (Demo)
+            "navLinks": True,  # Bấm vào ngày để xem chi tiết
             "headerToolbar": {
                 "left": "today prev,next",
                 "center": "title",
                 "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"
             },
             "initialView": "dayGridMonth",
-            "slotMinTime": "06:00:00",
-            "slotMaxTime": "22:00:00",
+            "selectable": True,
+            "nowIndicator": True,
         }
 
-        # Hiển thị
-        calendar(events=calendar_events, options=calendar_options, custom_css="""
-            .fc-event-title {font-weight: bold;}
-        """)
+        # 3. Render Calendar
+        # key="calendar" rất quan trọng để tránh reload lại component liên tục
+        if calendar_events:
+            calendar(events=calendar_events, options=calendar_options, key="my_calendar")
+        else:
+            st.warning("Không có sự kiện nào hợp lệ để hiển thị.")
     else:
         st.info("Chưa có dữ liệu để hiển thị lịch.")
