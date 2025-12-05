@@ -4,4 +4,5 @@ ttkbootstrap
 streamlit
 streamlit_calendar
 ics
+plyer
 
