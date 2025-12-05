@@ -13,19 +13,20 @@ except ImportError:
     st.stop()
 
 # ==========================================
-# 1. DATABASE MANAGER (ĐẦY ĐỦ CÁC HÀM)
+# 1. DATABASE MANAGER
 # ==========================================
 class Database:
     def __init__(self, db_name="scheduler.db"):
         self.db_name = db_name
 
     def get_connection(self):
-        # Kết nối trực tiếp mỗi lần gọi để tránh lỗi cache trên Cloud
+        # Kết nối trực tiếp mỗi lần gọi để tránh lỗi cache
         return sqlite3.connect(self.db_name, check_same_thread=False)
 
     def init_db(self):
         with self.get_connection() as conn:
             cursor = conn.cursor()
+            # Cấu trúc bảng chuẩn: cột tên là 'event'
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS events (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +40,6 @@ class Database:
             """)
             conn.commit()
 
-    # --- CÁC HÀM TRUY VẤN CƠ BẢN ---
     def get_all_events(self):
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -52,7 +52,6 @@ class Database:
             cursor.execute("SELECT * FROM events WHERE is_notified = 0")
             return cursor.fetchall()
 
-    # --- CÁC HÀM THAO TÁC (SỬA/XÓA/THÊM) ---
     def add_event(self, name, start, end, loc, remind):
         with self.get_connection() as conn:
             cursor = conn.cursor()
@@ -63,20 +62,16 @@ class Database:
             conn.commit()
 
     def delete_event(self, event_id):
-        try:
-            with self.get_connection() as conn:
-                cursor = conn.cursor()
-                cursor.execute("DELETE FROM events WHERE id = ?", (event_id,))
-                conn.commit()
-                print(f"DEBUG: Đã commit lệnh DELETE ID {event_id}") # Check log xem dòng này có hiện không
-        except Exception as e:
-            st.error(f"Lỗi Database: {e}") # Hiển thị lỗi đỏ lên màn hình
-            print(f"DB ERROR: {e}")
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM events WHERE id = ?", (event_id,))
+            conn.commit()
 
     def update_event(self, record_id, name, start, end, loc, remind):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             # Reset is_notified về 0 khi sửa để báo lại
+            # Cột là 'event', KHÔNG PHẢI 'event_name'
             cursor.execute("""
                 UPDATE events 
                 SET event=?, start_time=?, end_time=?, location=?, reminder_minutes=?, is_notified=0
@@ -115,7 +110,7 @@ def get_scheduler_logic():
 scheduler = get_scheduler_logic()
 
 # ==========================================
-# 2. CONFIG & HELPER
+# 2. CONFIG & STATE
 # ==========================================
 st.set_page_config(page_title="AI Smart Scheduler", page_icon="📅", layout="wide")
 
@@ -124,7 +119,7 @@ if 'selected_id_from_table' not in st.session_state:
 
 # Hàm kiểm tra nhắc nhở (Toast)
 def check_reminders():
-    events = db.get_unnotified_events() # Dùng hàm mới khôi phục
+    events = db.get_unnotified_events()
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
     
     for ev in events:
@@ -139,7 +134,7 @@ def check_reminders():
             
             if now_str == remind_dt.strftime("%Y-%m-%d %H:%M"):
                 st.toast(f"🔔 {name} ({loc or 'Online'})", icon="⏰")
-                db.mark_notified(eid) # Dùng hàm mới khôi phục
+                db.mark_notified(eid)
         except: continue
 
 check_reminders()
@@ -155,7 +150,7 @@ with st.sidebar:
     raw_text = st.text_area("Nhập câu lệnh:", height=100, 
                             placeholder="VD: Họp team tại P302 lúc 14h30 chiều mai...")
     
-    if st.button("Phân Tích & Thêm", type="primary", width='stretch'):
+    if st.button("Phân Tích & Thêm", type="primary", use_container_width=True):
         if raw_text.strip():
             with st.spinner("Đang xử lý..."):
                 result = scheduler.process(raw_text)
@@ -187,7 +182,7 @@ with st.sidebar:
 tab_list, tab_calendar = st.tabs(["📋 Danh Sách & Thao Tác", "📅 Xem Lịch"])
 
 # Lấy dữ liệu mới nhất
-all_events = db.get_all_events() # Dùng hàm class
+all_events = db.get_all_events()
 df = pd.DataFrame(all_events, columns=['ID', 'Sự Kiện', 'Bắt Đầu', 'Kết Thúc', 'Địa Điểm', 'Nhắc(p)', 'Notified'])
 
 # --- TAB 1: DANH SÁCH ---
@@ -197,11 +192,11 @@ with tab_list:
         
         event_selection = st.dataframe(
             df.drop(columns=['Notified']),
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
-            key=f"data_table_{len(df)}", 
+            key=f"data_table_{len(df)}", # Key dynamic để ép vẽ lại khi số lượng đổi
             column_config={
                 "ID": st.column_config.NumberColumn(width="small"),
                 "Sự Kiện": st.column_config.TextColumn(width="medium"),
@@ -220,34 +215,27 @@ with tab_list:
             if not check_exists.empty:
                 curr_row = check_exists.iloc[0]
                 st.divider()
-                st.info(f"Đang thao tác: **{curr_row['Sự Kiện']}**")
+                st.info(f"Đang thao tác: **{curr_row['Sự Kiện']}** (ID: {curr_id})")
                 
                 c1, c2 = st.columns(2)
                 
-                # --- HÀM XỬ LÝ XÓA (Cập nhật Log & Rerun) ---
+                # --- HÀM XỬ LÝ XÓA (FIXED) ---
                 def delete_handler():
-                    # 1. Debug log ra console của Cloud
-                    print(f"DEBUG: Đang xóa ID {curr_id}...")
-                    
-                    # 2. Thực hiện xóa
+                    # 1. Xóa trong DB
                     db.delete_event(curr_id)
-                    
-                    # 3. Reset session state liên quan
+                    # 2. Reset State (Quan trọng)
                     st.session_state.selected_id_from_table = None
+                    # 3. Thông báo
+                    st.toast("✅ Đã xóa thành công!")
+                    # 4. KHÔNG GỌI ST.RERUN() Ở ĐÂY. Streamlit tự rerun sau callback.
                     
-                    # 4. Thông báo UI
-                    st.toast("✅ Đã xóa thành công! Đang làm mới...", icon="🗑")
-                    
-                    # 5. Ép chạy lại app ngay lập tức để bảng cập nhật
-                    time.sleep(0.5) # Dừng xíu cho user kịp đọc toast
-                    st.rerun()
-                
-                c1.button("🗑 Xóa Sự Kiện", type="primary", width='stretch', on_click=delete_handler)
+                c1.button("🗑 Xóa Sự Kiện", type="primary", use_container_width=True, on_click=delete_handler)
                 
                 # --- FORM SỬA ---
                 with st.expander("✏️ Chỉnh Sửa", expanded=True):
                     with st.form("edit_form"):
                         new_name = st.text_input("Tên", value=curr_row['Sự Kiện'])
+                        
                         try: dt_s = pd.to_datetime(curr_row['Bắt Đầu'])
                         except: dt_s = datetime.now()
                         d_s = st.date_input("Ngày bắt đầu", value=dt_s.date())
@@ -267,10 +255,10 @@ with tab_list:
                             if len(str_s.split(":"))==2: str_s += ":00"
                             if len(str_e.split(":"))==2: str_e += ":00"
                             
-                            # Gọi hàm update_event rõ ràng
                             db.update_event(curr_id, new_name, str_s, str_e, new_loc, new_remind)
                             st.success("Đã cập nhật!")
-                            st.rerun()
+                            time.sleep(0.5)
+                            st.rerun() # Form submit thì cần rerun thủ công
             else:
                 st.session_state.selected_id_from_table = None
                 st.rerun()
@@ -318,45 +306,24 @@ with tab_calendar:
             "nowIndicator": True,
         }
         
-        calendar(events=calendar_events, options=calendar_options, key=f"cal_{mode}_{len(df)}")
+        # Key dynamic để ép render lại khi dữ liệu thay đổi
+        calendar(events=calendar_events, options=calendar_options, key=f"cal_{mode}_{len(df)}_{time.time()}")
     else:
         st.info("Chưa có dữ liệu lịch.")
 
-
 # ==========================================
-# 4. DEBUG DASHBOARD (Dán vào cuối file)
+# 4. DEBUG DASHBOARD (ADMIN)
 # ==========================================
 with st.sidebar:
     st.divider()
-    st.header("🛠 Công cụ Debug (Admin)")
-    
-    # 1. Kiểm tra file DB đang nằm ở đâu
-    import os
-    st.write(f"Đường dẫn DB: `{os.path.abspath('scheduler.db')}`")
-    
-    # 2. Nút tải file DB về máy (Để kiểm tra xem file có thực sự thay đổi không)
-    try:
-        with open("scheduler.db", "rb") as fp:
-            st.download_button(
-                label="📥 Tải file Database (.db)",
-                data=fp,
-                file_name="scheduler_debug.db",
-                mime="application/x-sqlite3"
-            )
-    except FileNotFoundError:
-        st.error("Không tìm thấy file scheduler.db!")
-
-    # 3. Chạy SQL trực tiếp để soi dữ liệu
-    st.write("### Soi dữ liệu thô:")
-    if st.button("Xem top 5 sự kiện trong DB"):
-        # Kết nối thủ công để chắc chắn không qua cache của class Database
+    with st.expander("🛠 Debug Tools"):
+        import os
+        st.write(f"DB Path: `{os.path.abspath('scheduler.db')}`")
+        if st.button("Reload App"):
+            st.rerun()
+        
+        # Download DB
         try:
-            conn_debug = sqlite3.connect("scheduler.db")
-            df_debug = pd.read_sql_query("SELECT * FROM events ORDER BY id DESC LIMIT 5", conn_debug)
-            st.dataframe(df_debug)
-            conn_debug.close()
-        except Exception as e:
-            st.error(f"Lỗi đọc DB: {e}")
-
-
-
+            with open("scheduler.db", "rb") as fp:
+                st.download_button("📥 Tải Database", fp, "scheduler_debug.db")
+        except: pass
