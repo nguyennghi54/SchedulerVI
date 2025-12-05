@@ -7,7 +7,6 @@ import time
 from datetime import datetime, timedelta
 import subprocess
 import sys
-from ics import Calendar, Event as IcsEvent
 from streamlit_calendar import calendar
 
 # ==========================================
@@ -161,25 +160,7 @@ def check_reminders():
 # Gọi hàm check reminder ngay đầu script
 check_reminders()
 
-# --- HÀM XUẤT FILE ---
-def generate_ics(events):
-    c = Calendar()
-    for ev in events:
-        e = IcsEvent()
-        e.name = ev[1]
-        # ICS yêu cầu format ISO 8601
-        try:
-            s_dt = pd.to_datetime(ev[2])
-            e.begin = s_dt.isoformat()
-            if ev[3]:
-                e_dt = pd.to_datetime(ev[3])
-                e.end = e_dt.isoformat()
-            else:
-                e.duration = timedelta(hours=1) # Default duration
-            if ev[4]: e.location = ev[4]
-            c.events.add(e)
-        except: continue
-    return str(c)
+
 
 def generate_json(events):
     data = []
@@ -233,12 +214,8 @@ with st.sidebar:
     st.header("📤 Xuất Dữ Liệu")
     events_raw = st.session_state.db.get_all_events()
 
-    c1, c2 = st.columns(2)
+    c1= st.columns(1)
     with c1:
-        if events_raw:
-            ics_data = generate_ics(events_raw)
-            st.download_button("Tải .ics", ics_data, "calendar.ics", "text/calendar", width='stretch')
-    with c2:
         if events_raw:
             json_data = generate_json(events_raw)
             st.download_button("Tải .json", json_data, "data.json", "application/json", width='stretch')
