@@ -2,7 +2,8 @@ underthesea
 pandas
 ttkbootstrap
 streamlit
-streamlit_calendar
+streamlit-calendar
 ics
 plyer
+
 
