@@ -219,12 +219,24 @@ with tab_list:
                 
                 c1, c2 = st.columns(2)
                 
-                # --- HÀM XỬ LÝ XÓA ---
+                # --- HÀM XỬ LÝ XÓA (Cập nhật Log & Rerun) ---
                 def delete_handler():
-                    db.delete_event(curr_id) # Gọi hàm delete_event rõ ràng
-                    st.toast("✅ Đã xóa thành công!")
+                    # 1. Debug log ra console của Cloud
+                    print(f"DEBUG: Đang xóa ID {curr_id}...")
+                    
+                    # 2. Thực hiện xóa
+                    db.delete_event(curr_id)
+                    
+                    # 3. Reset session state liên quan
                     st.session_state.selected_id_from_table = None
                     
+                    # 4. Thông báo UI
+                    st.toast("✅ Đã xóa thành công! Đang làm mới...", icon="🗑")
+                    
+                    # 5. Ép chạy lại app ngay lập tức để bảng cập nhật
+                    time.sleep(0.5) # Dừng xíu cho user kịp đọc toast
+                    st.rerun()
+                
                 c1.button("🗑 Xóa Sự Kiện", type="primary", width='stretch', on_click=delete_handler)
                 
                 # --- FORM SỬA ---
@@ -259,25 +271,7 @@ with tab_list:
                 st.rerun()
     else:
         st.info("Danh sách trống.")
-# --- HÀM XỬ LÝ XÓA (Cập nhật Log & Rerun) ---
-def delete_handler():
-    # 1. Debug log ra console của Cloud
-    print(f"DEBUG: Đang xóa ID {curr_id}...")
-    
-    # 2. Thực hiện xóa
-    db.delete_event(curr_id)
-    
-    # 3. Reset session state liên quan
-    st.session_state.selected_id_from_table = None
-    
-    # 4. Thông báo UI
-    st.toast("✅ Đã xóa thành công! Đang làm mới...", icon="🗑")
-    
-    # 5. Ép chạy lại app ngay lập tức để bảng cập nhật
-    time.sleep(0.5) # Dừng xíu cho user kịp đọc toast
-    st.rerun()
 
-c1.button("🗑 Xóa Sự Kiện", type="primary", width='stretch', on_click=delete_handler)
 # --- TAB 2: CALENDAR ---
 with tab_calendar:
     if not df.empty:
@@ -358,4 +352,5 @@ with st.sidebar:
             conn_debug.close()
         except Exception as e:
             st.error(f"Lỗi đọc DB: {e}")
+
 
