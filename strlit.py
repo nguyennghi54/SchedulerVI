@@ -63,10 +63,15 @@ class Database:
             conn.commit()
 
     def delete_event(self, event_id):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM events WHERE id = ?", (event_id,))
-            conn.commit()
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("DELETE FROM events WHERE id = ?", (event_id,))
+                conn.commit()
+                print(f"DEBUG: Đã commit lệnh DELETE ID {event_id}") # Check log xem dòng này có hiện không
+        except Exception as e:
+            st.error(f"Lỗi Database: {e}") # Hiển thị lỗi đỏ lên màn hình
+            print(f"DB ERROR: {e}")
 
     def update_event(self, record_id, name, start, end, loc, remind):
         with self.get_connection() as conn:
@@ -352,5 +357,6 @@ with st.sidebar:
             conn_debug.close()
         except Exception as e:
             st.error(f"Lỗi đọc DB: {e}")
+
 
 
