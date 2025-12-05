@@ -200,7 +200,7 @@ with st.sidebar:
     raw_text = st.text_area("Nhập câu lệnh:", height=100,
                             placeholder="Họp team tại P302 lúc 14h30 chiều mai...")
 
-    if st.button("Phân Tích & Thêm", type="primary", use_container_width=True):
+    if st.button("Phân Tích & Thêm", type="primary", width=True):
         if raw_text.strip():
             result = st.session_state.scheduler.process(raw_text)
             try:
