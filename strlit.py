@@ -1,39 +1,29 @@
 import streamlit as st
 import pandas as pd
-from nlp import *
 import sqlite3
-import threading
-import time
 from datetime import datetime, timedelta
-import subprocess
-import sys
+import time
 from streamlit_calendar import calendar
 
+# Import logic NLP
+try:
+    from nlp import SchedulerMain
+except ImportError:
+    st.error("⚠️ Lỗi: Không tìm thấy file nlp.py. Hãy đảm bảo đã upload lên GitHub.")
+    st.stop()
+
 # ==========================================
-# DATABASE MANAGER
+# 1. DATABASE MANAGER (ĐẦY ĐỦ CÁC HÀM)
 # ==========================================
-def start_background_worker():
-    # Kiểm tra xem worker đã chạy chưa (cách đơn giản là dùng file lock hoặc session state giả lập)
-    # Tuy nhiên, với Streamlit mỗi lần rerun code chạy lại, nên ta dùng biến toàn cục sys.modules để check tạm
-
-    if not hasattr(st.session_state, 'worker_running'):
-        # Gọi subprocess chạy file worker.py độc lập
-        # Popen là non-blocking (không làm treo web)
-        subprocess.Popen([sys.executable, "worker.py"])
-        st.session_state.worker_running = True
-        print("🚀 Đã khởi động Background Worker!")
-
-
-start_background_worker()
 class Database:
     def __init__(self, db_name="scheduler.db"):
         self.db_name = db_name
 
     def get_connection(self):
-        # Streamlit chạy đa luồng, cần check_same_thread=False
+        # Kết nối trực tiếp mỗi lần gọi để tránh lỗi cache trên Cloud
         return sqlite3.connect(self.db_name, check_same_thread=False)
 
-    def create_table(self):
+    def init_db(self):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
@@ -49,21 +39,28 @@ class Database:
             """)
             conn.commit()
 
+    # --- CÁC HÀM TRUY VẤN CƠ BẢN ---
+    def get_all_events(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM events ORDER BY start_time ASC")
+            return cursor.fetchall()
+            
+    def get_unnotified_events(self):
+        with self.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT * FROM events WHERE is_notified = 0")
+            return cursor.fetchall()
+
+    # --- CÁC HÀM THAO TÁC (SỬA/XÓA/THÊM) ---
     def add_event(self, name, start, end, loc, remind):
         with self.get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("""
-                INSERT INTO events (event, start_time, end_time, location, reminder_minutes)
+                INSERT INTO events (event, start_time, end_time, location, reminder_minutes) 
                 VALUES (?, ?, ?, ?, ?)
             """, (name, start, end, loc, remind))
             conn.commit()
-
-    def get_all_events(self):
-        with self.get_connection() as conn:
-            cursor = conn.cursor()
-            # Sắp xếp theo thời gian bắt đầu thay vì ID để dễ nhìn
-            cursor.execute("SELECT * FROM events ORDER BY start_time ASC")
-            return cursor.fetchall()
 
     def delete_event(self, event_id):
         with self.get_connection() as conn:
@@ -74,9 +71,9 @@ class Database:
     def update_event(self, record_id, name, start, end, loc, remind):
         with self.get_connection() as conn:
             cursor = conn.cursor()
-            # Reset is_notified = 0 khi sửa để báo lại
+            # Reset is_notified về 0 khi sửa để báo lại
             cursor.execute("""
-                UPDATE events
+                UPDATE events 
                 SET event=?, start_time=?, end_time=?, location=?, reminder_minutes=?, is_notified=0
                 WHERE id=?
             """, (name, start, end, loc, remind, record_id))
@@ -102,304 +99,208 @@ class Database:
                     return True, e_name
             return False, None
 
+# Khởi tạo DB
+db = Database()
+db.init_db()
+
+@st.cache_resource
+def get_scheduler_logic():
+    return SchedulerMain()
+
+scheduler = get_scheduler_logic()
 
 # ==========================================
-# 2. CONFIG & INIT
+# 2. CONFIG & HELPER
 # ==========================================
-st.set_page_config(page_title="AI Scheduler", page_icon="📅", layout="wide")
-
-# Khởi tạo Session State
-if 'db' not in st.session_state:
-    st.session_state.db = Database()
-    st.session_state.db.create_table()
-
-if 'scheduler' not in st.session_state:
-    st.session_state.scheduler = SchedulerMain()
+st.set_page_config(page_title="AI Smart Scheduler", page_icon="📅", layout="wide")
 
 if 'selected_id_from_table' not in st.session_state:
     st.session_state.selected_id_from_table = None
 
-# ==========================================
-# 3. HELPER FUNCTIONS
-# ==========================================
+# Hàm kiểm tra nhắc nhở (Toast)
 def check_reminders():
-    """Kiểm tra nhắc nhở mỗi khi app reload"""
-    events = st.session_state.db.get_all_events()
+    events = db.get_unnotified_events() # Dùng hàm mới khôi phục
     now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-
+    
     for ev in events:
         eid, name, start, end, loc, remind, notified = ev
-        if notified == 1: continue
-
         try:
-            # Xử lý datetime (có giây hoặc không)
-            try:
-                s_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
-            except ValueError:
-                s_dt = datetime.strptime(start, "%Y-%m-%d %H:%M")
-
-            # Quy về phút
-            s_dt = s_dt.replace(second=0, microsecond=0)
+            try: s_dt = datetime.strptime(start, "%Y-%m-%d %H:%M:%S")
+            except: s_dt = datetime.strptime(start, "%Y-%m-%d %H:%M")
+            
+            s_dt = s_dt.replace(second=0)
             remind_val = remind if remind else 0
             remind_dt = s_dt - timedelta(minutes=remind_val)
-            remind_str = remind_dt.strftime("%Y-%m-%d %H:%M")
+            
+            if now_str == remind_dt.strftime("%Y-%m-%d %H:%M"):
+                st.toast(f"🔔 {name} ({loc or 'Online'})", icon="⏰")
+                db.mark_notified(eid) # Dùng hàm mới khôi phục
+        except: continue
 
-            # So sánh
-            if now_str == remind_str:
-                # Hiển thị Toast Notification (Góc phải màn hình)
-                msg = f"🔔 Sắp diễn ra: {name}"
-                if loc: msg += f" tại {loc}"
-                st.toast(msg, icon="⏰")
-
-                # Cập nhật DB
-                st.session_state.db.mark_notified(eid)
-        except Exception as e:
-            continue
-
-
-# Gọi hàm check reminder ngay đầu script
 check_reminders()
 
-
-
-def generate_json(events):
-    data = []
-    for ev in events:
-        data.append({
-            "id": ev[0], "event": ev[1], "start": ev[2],
-            "end": ev[3], "location": ev[4], "remind": ev[5]
-        })
-    return json.dumps(data, ensure_ascii=False, indent=2)
-
 # ==========================================
-# 4. UI LAYOUT
+# 3. UI LAYOUT
 # ==========================================
-st.title("Ứng dụng Quản lý Lịch trình cá nhân")
+st.title("🤖 Ứng dụng Quản lý Lịch trình AI")
+
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("📝 Thêm Sự Kiện")
-    raw_text = st.text_area("Nhập câu lệnh:", height=100,
-                            placeholder="Họp team tại P302 lúc 14h30 chiều mai...")
-
-    if st.button("Phân Tích & Thêm", type="primary", width='stretch'):
+    raw_text = st.text_area("Nhập câu lệnh:", height=100, 
+                            placeholder="VD: Họp team tại P302 lúc 14h30 chiều mai...")
+    
+    if st.button("Phân Tích & Thêm", type="primary", use_container_width=True):
         if raw_text.strip():
-            result = st.session_state.scheduler.process(raw_text)
-            try:
-                dt = datetime.strptime(result['start_time'], "%Y-%m-%d %H:%M")
-                result['start_time'] = dt.strftime("%Y-%m-%d %H:%M:00")
-            except:
-                pass
-
-            # Auto End
-            if not result['end_time'] and result['start_time']:
+            with st.spinner("Đang xử lý..."):
+                result = scheduler.process(raw_text)
+                
                 try:
-                    s_dt = datetime.strptime(result['start_time'], "%Y-%m-%d %H:%M:%S")
-                    result['end_time'] = (s_dt + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
-                except:
-                    pass
+                    dt = datetime.strptime(result['start_time'], "%Y-%m-%d %H:%M")
+                    result['start_time'] = dt.strftime("%Y-%m-%d %H:%M:00")
+                except: pass
+                
+                if not result['end_time'] and result['start_time']:
+                     try:
+                        s = datetime.strptime(result['start_time'], "%Y-%m-%d %H:%M:%S")
+                        result['end_time'] = (s + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+                     except: pass
 
-            is_overlap, conflict = st.session_state.db.check_overlap(result['start_time'])
-            if is_overlap:
-                st.error(f"⚠️ Trùng lịch với: '{conflict}'")
-            else:
-                st.session_state.db.add_event(
-                    result['event'], result['start_time'], result['end_time'],
-                    result['location'], result['reminder_minutes']
-                )
-                st.success(f"Đã thêm: {result['event']}")
-                time.sleep(1)
-                st.rerun()
+                is_overlap, conflict = db.check_overlap(result['start_time'])
+                if is_overlap:
+                    st.error(f"⚠️ Trùng lịch với: '{conflict}'")
+                else:
+                    db.add_event(
+                        result['event'], result['start_time'], result['end_time'], 
+                        result['location'], result['reminder_minutes']
+                    )
+                    st.success(f"Đã thêm: {result['event']}")
+                    time.sleep(0.5)
+                    st.rerun()
 
-    st.divider()
-    st.header("📤 Xuất Dữ Liệu")
-    events_raw = st.session_state.db.get_all_events()
-
-    c1= st.columns(1)
-    if events_raw:
-        json_data = generate_json(events_raw)
-        st.download_button("Tải .json", json_data, "data.json", "application/json", width='stretch')
-
-# --- MAIN CONTENT ---
-tab_list, tab_calendar = st.tabs(["📋 Danh Sách & Thao Tác", "📅 Xem Lịch (Calendar View)"])
+# --- TABS ---
+tab_list, tab_calendar = st.tabs(["📋 Danh Sách & Thao Tác", "📅 Xem Lịch"])
 
 # Lấy dữ liệu mới nhất
-all_events = st.session_state.db.get_all_events()
+all_events = db.get_all_events() # Dùng hàm class
 df = pd.DataFrame(all_events, columns=['ID', 'Sự Kiện', 'Bắt Đầu', 'Kết Thúc', 'Địa Điểm', 'Nhắc(p)', 'Notified'])
 
-# --- TAB 1: DANH SÁCH (TABLE) ---
+# --- TAB 1: DANH SÁCH ---
 with tab_list:
-    # Lấy dữ liệu mới nhất từ DB
-    all_events = st.session_state.db.get_all_events()
-    df = pd.DataFrame(all_events, columns=['ID', 'Sự Kiện', 'Bắt Đầu', 'Kết Thúc', 'Địa Điểm', 'Nhắc(p)', 'Notified'])
-
     if not df.empty:
-        # 1. Bảng tương tác
-        st.caption("Click vào event để xóa/sửa")
-
-        df_display = df.drop(columns=['Notified']).copy()
-
-        # Bảng dữ liệu
+        st.caption("👇 Click vào dòng để hiện menu Xóa/Sửa")
+        
         event_selection = st.dataframe(
-            df_display,
-            width='stretch',
+            df.drop(columns=['Notified']),
+            use_container_width=True,
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
-            key="data_table",  # Thêm key cố định để tránh render lại lung tung
+            key=f"data_table_{len(df)}", 
             column_config={
                 "ID": st.column_config.NumberColumn(width="small"),
                 "Sự Kiện": st.column_config.TextColumn(width="medium"),
-                "Bắt Đầu": st.column_config.DatetimeColumn(format="D/M/YYYY HH:mm"),
             }
         )
-
-        # Logic cập nhật ID đang chọn
+        
         selected_rows = event_selection.selection.rows
         if selected_rows:
-            idx = selected_rows[0]
-            # Cập nhật Session State
-            st.session_state.selected_id_from_table = df.iloc[idx]['ID']
-
-        # --- KHU VỰC THAO TÁC (Chỉ hiện khi đã chọn ID) ---
+            st.session_state.selected_id_from_table = df.iloc[selected_rows[0]]['ID']
+        
+        # --- ACTION PANEL ---
         if st.session_state.selected_id_from_table:
-            # Kiểm tra xem ID này còn tồn tại trong DB không (tránh lỗi khi vừa xóa xong)
-            if st.session_state.selected_id_from_table in df['ID'].values:
-                curr_id = st.session_state.selected_id_from_table
-                curr_row = df[df['ID'] == curr_id].iloc[0]
-
+            curr_id = st.session_state.selected_id_from_table
+            check_exists = df[df['ID'] == curr_id]
+            
+            if not check_exists.empty:
+                curr_row = check_exists.iloc[0]
                 st.divider()
-                st.info(f"Đang chọn: **{curr_row['Sự Kiện']}** (ID: {curr_id})")
-
-                col_act1, col_act2 = st.columns([1, 1])
-
-
-                # --- NÚT XÓA (DÙNG CALLBACK - QUAN TRỌNG) ---
-                def delete_callback():
-                    st.session_state.db.delete_event(curr_id)
-                    st.toast("Đã xóa sự kiện!", icon="✅")
-                    # Reset lại lựa chọn để tránh lỗi
+                st.info(f"Đang thao tác: **{curr_row['Sự Kiện']}**")
+                
+                c1, c2 = st.columns(2)
+                
+                # --- HÀM XỬ LÝ XÓA ---
+                def delete_handler():
+                    db.delete_event(curr_id) # Gọi hàm delete_event rõ ràng
+                    st.toast("✅ Đã xóa thành công!")
                     st.session_state.selected_id_from_table = None
-
-
-                with col_act1:
-                    st.button(
-                        "🗑 Xóa Sự Kiện Này",
-                        type="primary",
-                        width='stretch',
-                        on_click=delete_callback  # Gọi hàm ngay lập tức khi click
-                    )
-
+                    
+                c1.button("🗑 Xóa Sự Kiện", type="primary", use_container_width=True, on_click=delete_handler)
+                
                 # --- FORM SỬA ---
-                with st.expander("✏️ Chỉnh Sửa Thông Tin", expanded=True):
+                with st.expander("✏️ Chỉnh Sửa", expanded=True):
                     with st.form("edit_form"):
-                        new_name = st.text_input("Tên sự kiện", value=curr_row['Sự Kiện'])
-                        c_d, c_t = st.columns(2)
+                        new_name = st.text_input("Tên", value=curr_row['Sự Kiện'])
+                        try: dt_s = pd.to_datetime(curr_row['Bắt Đầu'])
+                        except: dt_s = datetime.now()
+                        d_s = st.date_input("Ngày bắt đầu", value=dt_s.date())
+                        t_s = st.time_input("Giờ bắt đầu", value=dt_s.time())
 
-                        # Parse thời gian cũ để điền vào form
-                        try:
-                            dt_s = pd.to_datetime(curr_row['Bắt Đầu'])
-                        except:
-                            dt_s = datetime.now()
-                        d_s = c_d.date_input("Ngày bắt đầu", value=dt_s.date())
-                        t_s = c_t.time_input("Giờ bắt đầu", value=dt_s.time())
-
-                        try:
-                            dt_e = pd.to_datetime(curr_row['Kết Thúc'])
-                        except:
-                            dt_e = dt_s
-                        d_e = c_d.date_input("Ngày kết thúc", value=dt_e.date())
-                        t_e = c_t.time_input("Giờ kết thúc", value=dt_e.time())
-
+                        try: dt_e = pd.to_datetime(curr_row['Kết Thúc'])
+                        except: dt_e = dt_s
+                        d_e = st.date_input("Ngày kết thúc", value=dt_e.date())
+                        t_e = st.time_input("Giờ kết thúc", value=dt_e.time())
+                        
                         new_loc = st.text_input("Địa điểm", value=curr_row['Địa Điểm'] or "")
-                        new_remind = st.number_input("Nhắc trước (phút)", value=int(curr_row['Nhắc(p)']))
+                        new_remind = st.number_input("Nhắc trước (p)", value=int(curr_row['Nhắc(p)']))
 
                         if st.form_submit_button("Lưu Thay Đổi"):
-                            # Logic lưu (như cũ)
                             str_s = f"{d_s} {t_s}"
                             str_e = f"{d_e} {t_e}"
-                            if len(str_s.split(":")) == 2: str_s += ":00"
-                            if len(str_e.split(":")) == 2: str_e += ":00"
-
-                            if str_s > str_e:
-                                st.error("Ngày kết thúc phải sau ngày bắt đầu!")
-                            else:
-                                is_ov, conf = st.session_state.db.check_overlap(str_s, exclude_id=curr_id)
-                                if is_ov: st.warning(f"Trùng lịch: {conf}")
-
-                                st.session_state.db.update_event(curr_id, new_name, str_s, str_e, new_loc, new_remind)
-                                st.success("Đã cập nhật!")
-                                time.sleep(0.5)
-                                st.rerun()
+                            if len(str_s.split(":"))==2: str_s += ":00"
+                            if len(str_e.split(":"))==2: str_e += ":00"
+                            
+                            # Gọi hàm update_event rõ ràng
+                            db.update_event(curr_id, new_name, str_s, str_e, new_loc, new_remind)
+                            st.success("Đã cập nhật!")
+                            st.rerun()
             else:
-                # Nếu ID không còn tồn tại (vừa xóa xong), reset state
                 st.session_state.selected_id_from_table = None
                 st.rerun()
     else:
-        st.info("Danh sách trống. Hãy thêm sự kiện mới!")
+        st.info("Danh sách trống.")
 
-# --- TAB 2: CALENDAR VIEW (ĐÃ SỬA LỖI) ---
+# --- TAB 2: CALENDAR ---
 with tab_calendar:
     if not df.empty:
-        # 1. Debug: Kiểm tra xem có dữ liệu không
-        # st.write(f"Tổng số sự kiện trong DB: {len(df)}")
-
         calendar_events = []
-
         for _, row in df.iterrows():
-            # Kiểm tra dữ liệu rỗng trước khi convert
             if not row['Bắt Đầu']: continue
-
             try:
-                # Convert Start Time
                 s_dt = pd.to_datetime(row['Bắt Đầu'])
-                if pd.isna(s_dt): continue  # Bỏ qua nếu NaT
                 s_iso = s_dt.isoformat()
-
-                # Convert End Time
-                e_iso = s_iso  # Mặc định End = Start
+                
+                e_iso = s_iso
                 if row['Kết Thúc']:
                     e_dt = pd.to_datetime(row['Kết Thúc'])
-                    if not pd.isna(e_dt):
-                        e_iso = e_dt.isoformat()
-
-                # Tô màu: Đỏ nếu có nhắc nhở, Xanh nếu không
+                    if not pd.isna(e_dt): e_iso = e_dt.isoformat()
+                
                 color = "#FF6C6C" if row['Nhắc(p)'] > 0 else "#3788d8"
-
+                
                 calendar_events.append({
-                    "title": f"{row['Sự Kiện']}",
+                    "title": row['Sự Kiện'],
                     "start": s_iso,
                     "end": e_iso,
                     "backgroundColor": color,
-                    "borderColor": color,
-                    # Thêm tooltip
-                    "extendedProps": {
-                        "location": row['Địa Điểm'] or "Không có địa điểm",
-                        "description": f"Nhắc trước: {row['Nhắc(p)']}p"
-                    }
+                    "borderColor": color
                 })
-            except Exception as e:
-                st.error(f"Lỗi dòng ID {row['ID']}: {e}") # Bật dòng này để debug nếu cần
-                continue
+            except: continue
 
-        # 2. Cấu hình Calendar (Chỉnh lại view mặc định)
+        mode = st.radio("Chế độ xem:", ["Tháng", "Tuần", "Ngày", "Danh sách"], horizontal=True)
+        view_map = {"Tháng": "dayGridMonth", "Tuần": "timeGridWeek", "Ngày": "timeGridDay", "Danh sách": "listWeek"}
+        
         calendar_options = {
-            "editable": True,  # Cho phép kéo thả (Demo)
-            "navLinks": True,  # Bấm vào ngày để xem chi tiết
             "headerToolbar": {
                 "left": "today prev,next",
                 "center": "title",
-                "right": "dayGridMonth,timeGridWeek,timeGridDay,listWeek"
+                "right": ""
             },
-            "initialView": "dayGridMonth",
+            "initialView": view_map[mode],
+            "navLinks": True,
             "selectable": True,
             "nowIndicator": True,
         }
-
-        # 3. Render Calendar
-        # key="calendar" rất quan trọng để tránh reload lại component liên tục
-        if calendar_events:
-            calendar(events=calendar_events, options=calendar_options, key="my_calendar")
-        else:
-            st.warning("Không có sự kiện nào hợp lệ để hiển thị.")
+        
+        calendar(events=calendar_events, options=calendar_options, key=f"cal_{mode}_{len(df)}")
     else:
-        st.info("Chưa có dữ liệu để hiển thị lịch.")
+        st.info("Chưa có dữ liệu lịch.")
