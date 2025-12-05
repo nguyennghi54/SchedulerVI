@@ -150,7 +150,7 @@ with st.sidebar:
     raw_text = st.text_area("Nhập câu lệnh:", height=100, 
                             placeholder="VD: Họp team tại P302 lúc 14h30 chiều mai...")
     
-    if st.button("Phân Tích & Thêm", type="primary", use_container_width=True):
+    if st.button("Phân Tích & Thêm", type="primary", width='stretch'):
         if raw_text.strip():
             with st.spinner("Đang xử lý..."):
                 result = scheduler.process(raw_text)
@@ -192,7 +192,7 @@ with tab_list:
         
         event_selection = st.dataframe(
             df.drop(columns=['Notified']),
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
@@ -225,7 +225,7 @@ with tab_list:
                     st.toast("✅ Đã xóa thành công!")
                     st.session_state.selected_id_from_table = None
                     
-                c1.button("🗑 Xóa Sự Kiện", type="primary", use_container_width=True, on_click=delete_handler)
+                c1.button("🗑 Xóa Sự Kiện", type="primary", width='stretch', on_click=delete_handler)
                 
                 # --- FORM SỬA ---
                 with st.expander("✏️ Chỉnh Sửa", expanded=True):
@@ -304,3 +304,4 @@ with tab_calendar:
         calendar(events=calendar_events, options=calendar_options, key=f"cal_{mode}_{len(df)}")
     else:
         st.info("Chưa có dữ liệu lịch.")
+
