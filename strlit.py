@@ -215,10 +215,9 @@ with st.sidebar:
     events_raw = st.session_state.db.get_all_events()
 
     c1= st.columns(1)
-    with c1:
-        if events_raw:
-            json_data = generate_json(events_raw)
-            st.download_button("Tải .json", json_data, "data.json", "application/json", width='stretch')
+    if events_raw:
+        json_data = generate_json(events_raw)
+        st.download_button("Tải .json", json_data, "data.json", "application/json", width='stretch')
 
 # --- MAIN CONTENT ---
 tab_list, tab_calendar = st.tabs(["📋 Danh Sách & Thao Tác", "📅 Xem Lịch (Calendar View)"])
