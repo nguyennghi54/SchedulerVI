@@ -200,7 +200,7 @@ with st.sidebar:
     raw_text = st.text_area("Nhập câu lệnh:", height=100,
                             placeholder="Họp team tại P302 lúc 14h30 chiều mai...")
 
-    if st.button("Phân Tích & Thêm", type="primary", width=True):
+    if st.button("Phân Tích & Thêm", type="primary", width='stretch'):
         if raw_text.strip():
             result = st.session_state.scheduler.process(raw_text)
             try:
@@ -237,11 +237,11 @@ with st.sidebar:
     with c1:
         if events_raw:
             ics_data = generate_ics(events_raw)
-            st.download_button("Tải .ics", ics_data, "calendar.ics", "text/calendar", use_container_width=True)
+            st.download_button("Tải .ics", ics_data, "calendar.ics", "text/calendar", width='stretch')
     with c2:
         if events_raw:
             json_data = generate_json(events_raw)
-            st.download_button("Tải .json", json_data, "data.json", "application/json", use_container_width=True)
+            st.download_button("Tải .json", json_data, "data.json", "application/json", width='stretch')
 
 # --- MAIN CONTENT ---
 tab_list, tab_calendar = st.tabs(["📋 Danh Sách & Thao Tác", "📅 Xem Lịch (Calendar View)"])
@@ -262,7 +262,7 @@ with tab_list:
         # SỬ DỤNG SELECTION EVENT CỦA STREAMLIT (MỚI)
         event_selection = st.dataframe(
             df_display,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             on_select="rerun",  # Khi chọn sẽ chạy lại app để cập nhật UI
             selection_mode="single-row",  # Chỉ cho chọn 1 dòng
@@ -296,7 +296,7 @@ with tab_list:
             col_act1, col_act2 = st.columns([1, 1])
 
             # Nút Xóa
-            if col_act1.button("🗑 Xóa Sự Kiện Này", type="primary", use_container_width=True):
+            if col_act1.button("🗑 Xóa Sự Kiện Này", type="primary", width='stretch'):
                 st.session_state.db.delete_event(curr_id)
                 st.session_state.selected_id_from_table = None  # Reset
                 st.toast("Đã xóa thành công!", icon="✅")
