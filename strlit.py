@@ -116,7 +116,11 @@ st.set_page_config(page_title="AI Smart Scheduler", page_icon="📅", layout="wi
 
 if 'selected_id_from_table' not in st.session_state:
     st.session_state.selected_id_from_table = None
+if 'data_version' not in st.session_state:
+    st.session_state.data_version = 0
 
+if 'selected_id_from_table' not in st.session_state:
+    st.session_state.selected_id_from_table = None
 # Hàm kiểm tra nhắc nhở (Toast)
 def check_reminders():
     events = db.get_unnotified_events()
@@ -175,6 +179,7 @@ with st.sidebar:
                         result['location'], result['reminder_minutes']
                     )
                     st.success(f"Đã thêm: {result['event']}")
+                    st.session_state.data_version += 1
                     time.sleep(0.5)
                     st.rerun()
 
@@ -225,9 +230,9 @@ with tab_list:
                     db.delete_event(curr_id)
                     # 2. Reset State (Quan trọng)
                     st.session_state.selected_id_from_table = None
+                    st.session_state.data_version += 1
                     # 3. Thông báo
                     st.toast("✅ Đã xóa thành công!")
-                    # 4. KHÔNG GỌI ST.RERUN() Ở ĐÂY. Streamlit tự rerun sau callback.
                     
                 c1.button("🗑 Xóa Sự Kiện", type="primary", width='stretch', on_click=delete_handler)
                 
@@ -257,8 +262,9 @@ with tab_list:
                             
                             db.update_event(curr_id, new_name, str_s, str_e, new_loc, new_remind)
                             st.success("Đã cập nhật!")
+                            st.session_state.data_version += 1
                             time.sleep(0.5)
-                            st.rerun() # Form submit thì cần rerun thủ công
+                            st.rerun()
             else:
                 st.session_state.selected_id_from_table = None
                 st.rerun()
@@ -307,7 +313,11 @@ with tab_calendar:
         }
         
         # Key dynamic để ép render lại khi dữ liệu thay đổi
-        calendar(events=calendar_events, options=calendar_options, key=f"cal_{mode}_{len(df)}_{time.time()}")
+        calendar(
+            events=calendar_events, 
+            options=calendar_options, 
+            key=f"cal_{mode}_{st.session_state.data_version}"
+        )
     else:
         st.info("Chưa có dữ liệu lịch.")
 
@@ -327,4 +337,5 @@ with st.sidebar:
             with open("scheduler.db", "rb") as fp:
                 st.download_button("📥 Tải Database", fp, "scheduler_debug.db")
         except: pass
+
 
