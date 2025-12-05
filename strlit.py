@@ -1,4 +1,4 @@
-﻿import streamlit as st
+import streamlit as st
 import pandas as pd
 from nlp import *
 import sqlite3
@@ -252,20 +252,24 @@ df = pd.DataFrame(all_events, columns=['ID', 'Sự Kiện', 'Bắt Đầu', 'K�
 
 # --- TAB 1: DANH SÁCH (TABLE) ---
 with tab_list:
-    if not df.empty:
-        # 1. Bảng tương tác (Có thể click chọn dòng)
-        st.caption("💡 Mẹo: Click vào đầu dòng để chọn sự kiện cần Xóa/Sửa")
+    # Lấy dữ liệu mới nhất từ DB
+    all_events = st.session_state.db.get_all_events()
+    df = pd.DataFrame(all_events, columns=['ID', 'Sự Kiện', 'Bắt Đầu', 'Kết Thúc', 'Địa Điểm', 'Nhắc(p)', 'Notified'])
 
-        # Cấu hình hiển thị
+    if not df.empty:
+        # 1. Bảng tương tác
+        st.caption("Click vào event để xóa/sửa")
+
         df_display = df.drop(columns=['Notified']).copy()
 
-        # SỬ DỤNG SELECTION EVENT CỦA STREAMLIT (MỚI)
+        # Bảng dữ liệu
         event_selection = st.dataframe(
             df_display,
-            width='stretch',
+            use_container_width=True,
             hide_index=True,
-            on_select="rerun",  # Khi chọn sẽ chạy lại app để cập nhật UI
-            selection_mode="single-row",  # Chỉ cho chọn 1 dòng
+            on_select="rerun",
+            selection_mode="single-row",
+            key="data_table",  # Thêm key cố định để tránh render lại lung tung
             column_config={
                 "ID": st.column_config.NumberColumn(width="small"),
                 "Sự Kiện": st.column_config.TextColumn(width="medium"),
@@ -273,80 +277,89 @@ with tab_list:
             }
         )
 
-        # Xử lý Logic chọn dòng
-        selected_row_indices = event_selection.selection.rows
-        selected_db_id = None
+        # Logic cập nhật ID đang chọn
+        selected_rows = event_selection.selection.rows
+        if selected_rows:
+            idx = selected_rows[0]
+            # Cập nhật Session State
+            st.session_state.selected_id_from_table = df.iloc[idx]['ID']
 
-        if selected_row_indices:
-            # Lấy index dòng đang chọn -> Lấy ID từ dataframe gốc
-            idx = selected_row_indices[0]
-            selected_db_id = df.iloc[idx]['ID']
-            st.session_state.selected_id_from_table = selected_db_id
-
-        # KHU VỰC THAO TÁC (Chỉ hiện khi đã chọn ID)
+        # --- KHU VỰC THAO TÁC (Chỉ hiện khi đã chọn ID) ---
         if st.session_state.selected_id_from_table:
-            curr_id = st.session_state.selected_id_from_table
+            # Kiểm tra xem ID này còn tồn tại trong DB không (tránh lỗi khi vừa xóa xong)
+            if st.session_state.selected_id_from_table in df['ID'].values:
+                curr_id = st.session_state.selected_id_from_table
+                curr_row = df[df['ID'] == curr_id].iloc[0]
 
-            # Lấy thông tin chi tiết của row đang chọn
-            curr_row = df[df['ID'] == curr_id].iloc[0]
+                st.divider()
+                st.info(f"Đang chọn: **{curr_row['Sự Kiện']}** (ID: {curr_id})")
 
-            st.divider()
-            st.info(f"Đang thao tác với sự kiện: **{curr_row['Sự Kiện']}** (ID: {curr_id})")
+                col_act1, col_act2 = st.columns([1, 1])
 
-            col_act1, col_act2 = st.columns([1, 1])
 
-            # Nút Xóa
-            if col_act1.button("🗑 Xóa Sự Kiện Này", type="primary", width='stretch'):
-                st.session_state.db.delete_event(curr_id)
-                st.session_state.selected_id_from_table = None  # Reset
-                st.toast("Đã xóa thành công!", icon="✅")
-                time.sleep(1)
+                # --- NÚT XÓA (DÙNG CALLBACK - QUAN TRỌNG) ---
+                def delete_callback():
+                    st.session_state.db.delete_event(curr_id)
+                    st.toast("Đã xóa sự kiện!", icon="✅")
+                    # Reset lại lựa chọn để tránh lỗi
+                    st.session_state.selected_id_from_table = None
+
+
+                with col_act1:
+                    st.button(
+                        "🗑 Xóa Sự Kiện Này",
+                        type="primary",
+                        use_container_width=True,
+                        on_click=delete_callback  # Gọi hàm ngay lập tức khi click
+                    )
+
+                # --- FORM SỬA ---
+                with st.expander("✏️ Chỉnh Sửa Thông Tin", expanded=True):
+                    with st.form("edit_form"):
+                        new_name = st.text_input("Tên sự kiện", value=curr_row['Sự Kiện'])
+                        c_d, c_t = st.columns(2)
+
+                        # Parse thời gian cũ để điền vào form
+                        try:
+                            dt_s = pd.to_datetime(curr_row['Bắt Đầu'])
+                        except:
+                            dt_s = datetime.now()
+                        d_s = c_d.date_input("Ngày bắt đầu", value=dt_s.date())
+                        t_s = c_t.time_input("Giờ bắt đầu", value=dt_s.time())
+
+                        try:
+                            dt_e = pd.to_datetime(curr_row['Kết Thúc'])
+                        except:
+                            dt_e = dt_s
+                        d_e = c_d.date_input("Ngày kết thúc", value=dt_e.date())
+                        t_e = c_t.time_input("Giờ kết thúc", value=dt_e.time())
+
+                        new_loc = st.text_input("Địa điểm", value=curr_row['Địa Điểm'] or "")
+                        new_remind = st.number_input("Nhắc trước (phút)", value=int(curr_row['Nhắc(p)']))
+
+                        if st.form_submit_button("Lưu Thay Đổi"):
+                            # Logic lưu (như cũ)
+                            str_s = f"{d_s} {t_s}"
+                            str_e = f"{d_e} {t_e}"
+                            if len(str_s.split(":")) == 2: str_s += ":00"
+                            if len(str_e.split(":")) == 2: str_e += ":00"
+
+                            if str_s > str_e:
+                                st.error("Ngày kết thúc phải sau ngày bắt đầu!")
+                            else:
+                                is_ov, conf = st.session_state.db.check_overlap(str_s, exclude_id=curr_id)
+                                if is_ov: st.warning(f"Trùng lịch: {conf}")
+
+                                st.session_state.db.update_event(curr_id, new_name, str_s, str_e, new_loc, new_remind)
+                                st.success("Đã cập nhật!")
+                                time.sleep(0.5)
+                                st.rerun()
+            else:
+                # Nếu ID không còn tồn tại (vừa xóa xong), reset state
+                st.session_state.selected_id_from_table = None
                 st.rerun()
-
-            # Form Sửa (Expand)
-            with st.expander("✏️ Chỉnh Sửa Thông Tin", expanded=True):
-                with st.form("edit_form"):
-                    new_name = st.text_input("Tên sự kiện", value=curr_row['Sự Kiện'])
-                    c_d, c_t = st.columns(2)
-
-                    # Parse Start
-                    try:
-                        dt_s = pd.to_datetime(curr_row['Bắt Đầu'])
-                    except:
-                        dt_s = datetime.now()
-                    d_s = c_d.date_input("Ngày bắt đầu", value=dt_s.date())
-                    t_s = c_t.time_input("Giờ bắt đầu", value=dt_s.time())
-
-                    # Parse End
-                    try:
-                        dt_e = pd.to_datetime(curr_row['Kết Thúc'])
-                    except:
-                        dt_e = dt_s
-                    d_e = c_d.date_input("Ngày kết thúc", value=dt_e.date())
-                    t_e = c_t.time_input("Giờ kết thúc", value=dt_e.time())
-
-                    new_loc = st.text_input("Địa điểm", value=curr_row['Địa Điểm'] if curr_row['Địa Điểm'] else "")
-                    new_remind = st.number_input("Nhắc trước (phút)", value=int(curr_row['Nhắc(p)']))
-
-                    if st.form_submit_button("Lưu Thay Đổi"):
-                        str_s = f"{d_s} {t_s}"
-                        str_e = f"{d_e} {t_e}"
-                        if len(str_s.split(":")) == 2: str_s += ":00"
-                        if len(str_e.split(":")) == 2: str_e += ":00"
-
-                        if str_s > str_e:
-                            st.error("Ngày kết thúc sai!")
-                        else:
-                            is_ov, conf = st.session_state.db.check_overlap(str_s, exclude_id=curr_id)
-                            if is_ov: st.warning(f"Trùng lịch: {conf}")
-
-                            st.session_state.db.update_event(curr_id, new_name, str_s, str_e, new_loc, new_remind)
-                            st.session_state.selected_id_from_table = None
-                            st.success("Đã cập nhật!")
-                            time.sleep(1)
-                            st.rerun()
     else:
-        st.info("Danh sách trống.")
+        st.info("Danh sách trống. Hãy thêm sự kiện mới!")
 
 # --- TAB 2: CALENDAR VIEW (LỊCH TRỰC QUAN) ---
 with tab_calendar:
