@@ -265,7 +265,7 @@ with tab_list:
         # Bảng dữ liệu
         event_selection = st.dataframe(
             df_display,
-            use_container_width=True,
+            width='stretch',
             hide_index=True,
             on_select="rerun",
             selection_mode="single-row",
@@ -309,7 +309,7 @@ with tab_list:
                     st.button(
                         "🗑 Xóa Sự Kiện Này",
                         type="primary",
-                        use_container_width=True,
+                        width='stretch',
                         on_click=delete_callback  # Gọi hàm ngay lập tức khi click
                     )
 
